@@ -1,0 +1,88 @@
+import os
+import requests
+from bs4 import BeautifulSoup
+
+def get_disease_links(letter_url):
+    response = requests.get(letter_url)
+    if response.status_code != 200:
+        print(f"Erreur pour {letter_url}: {response.status_code}")
+        return []
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+    links = []
+    for a_tag in soup.find_all('a', href=True):
+        href = a_tag['href']
+        if "/diseases-conditions/" in href and "/symptoms-causes/" in href:
+            if href.startswith("http"):
+                full_url = href
+            else:
+                full_url = f"https://www.mayoclinic.org{href}"
+            links.append(full_url)
+    return links
+
+def extraire_informations_maladie(url, sections_ciblees=["Overview", "Symptoms", "When to see a doctor", "Causes", "Risk factors", "Complications"]):
+    try:
+        reponse = requests.get(url)
+        reponse.raise_for_status()
+        soup = BeautifulSoup(reponse.content, 'html.parser')
+
+        sections = soup.find_all(['h2', 'h3'])
+        informations_maladie = {}
+        for section in sections:
+            titre_section = section.text.strip()
+            if titre_section in sections_ciblees:
+                contenu_section = []
+                element = section.find_next_sibling()
+                while element and element.name not in ['h2', 'h3']:
+                    if element.name in ['p', 'ul', 'ol']:
+                        contenu_section.append(element.get_text(strip=True))
+                    elif element.name == 'img':
+                        legende = element.get('alt')
+                        if legende:
+                            contenu_section.append(f"Image : {legende}")
+                    element = element.find_next_sibling()
+                informations_maladie[titre_section] = '\n'.join(contenu_section)
+
+        return informations_maladie
+
+    except (requests.exceptions.RequestException, ConnectionError) as erreur:
+        print(f"Erreur lors du scraping : {erreur}")
+        return {}
+
+def extract_and_save_disease_text(url, output_dir, sections_ciblees):
+    disease_info = extraire_informations_maladie(url, sections_ciblees)
+    disease_name = url.split("/diseases-conditions/")[1].split("/symptoms-causes")[0]
+    file_path = os.path.join(output_dir, f"{disease_name}.txt")
+    
+    with open(file_path, 'w', encoding='utf-8') as file:
+        for titre, contenu in disease_info.items():
+            file.write(f"**{titre}**\n{contenu}\n")
+    print(f"Texte enregistré pour {disease_name} dans {file_path}")
+
+def main():
+    base_url = "https://www.mayoclinic.org/diseases-conditions/index?letter="
+    main_output_dir = "maladies"
+    os.makedirs(main_output_dir, exist_ok=True)
+
+    max_diseases = 300  # Limite de maladies à traiter
+    disease_count = 0
+
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        letter_url = f"{base_url}{letter}"
+        letter_output_dir = os.path.join(main_output_dir, letter)
+        os.makedirs(letter_output_dir, exist_ok=True)
+
+        print(f"Traitement des maladies pour la lettre {letter}")
+        disease_links = get_disease_links(letter_url)
+
+        print(f"Nombre de maladies trouvées pour {letter} : {len(disease_links)}")
+
+        for link in disease_links:
+            if disease_count >= max_diseases:
+                print("Limite de maladies traitées atteinte.")
+                return
+            extract_and_save_disease_text(link, letter_output_dir, ["Overview", "Symptoms", "When to see a doctor", "Causes", "Risk factors", "Complications"])
+            disease_count += 1
+
+if __name__ == "__main__":
+    main()
